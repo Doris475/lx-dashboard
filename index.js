@@ -13,7 +13,17 @@ var lxExtReady = false;
 
   var KEY = 'lxExtOrbPos8';
   var NAMES = { 1: '状态卡', 2: '日历', 3: '计划日记', 4: '自由卡', 5: '查手机' };
-  var R_ORB = 28, R_NODE = 23, RING_R = 82, NODE_W = 46, HEAD_H = 40;
+  var HEAD_H = 40;
+  var SZ = { orb: 52, node: 41, R: 88 };
+  function calcSizes() {
+    var m = Math.min(W(), H());
+    SZ.node = Math.round(clamp(m * 0.104, 36, 44));
+    SZ.orb = Math.round(clamp(m * 0.134, 46, 56));
+    SZ.R = Math.round(SZ.node * 2.16);
+    var de = document.documentElement;
+    de.style.setProperty('--lxO', SZ.orb + 'px');
+    de.style.setProperty('--lxN', SZ.node + 'px');
+  }
 
   var orb = null, fan = null, card = null, iframe = null;
   var cur = 1, open = false, fanOn = false, tipTimer = null;
@@ -27,17 +37,17 @@ var lxExtReady = false;
   /* ---------------- 样式 ---------------- */
   var CSS = [
     /* 球 */
-    '#lxExtOrb{position:fixed;left:0;top:0;z-index:2147483600;width:56px;height:56px;padding:0;border-radius:50%;',
+    '#lxExtOrb{position:fixed;left:0;top:0;z-index:2147483600;width:var(--lxO,52px);height:var(--lxO,52px);padding:0;border-radius:50%;',
     'border:1px solid rgba(127,200,182,.6);touch-action:none;-webkit-tap-highlight-color:transparent;cursor:pointer;',
     'display:grid;place-items:center;transform:translate(-50%,-50%);',
     'background:radial-gradient(circle at 36% 28%,rgba(255,255,255,.97),rgba(230,244,239,.88) 62%,rgba(212,235,227,.8));',
     '-webkit-backdrop-filter:blur(9px) saturate(1.12);backdrop-filter:blur(9px) saturate(1.12);',
     'box-shadow:0 12px 26px -12px rgba(18,72,60,.42),inset 0 1px 0 rgba(255,255,255,.95);',
     'transition:box-shadow .35s,transform .3s cubic-bezier(.2,.9,.2,1),opacity .28s;}',
-    '#lxExtOrb .sp{position:absolute;inset:6px;border-radius:50%;border:1px dashed rgba(127,200,182,.5);animation:lxExtSpin 30s linear infinite;transition:opacity .3s;}',
+    '#lxExtOrb .sp{position:absolute;inset:calc(var(--lxO,52px)*.11);border-radius:50%;border:1px dashed rgba(127,200,182,.5);animation:lxExtSpin 30s linear infinite;transition:opacity .3s;}',
     '#lxExtOrb .sp i{position:absolute;top:-2px;left:50%;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:rgba(93,168,152,.85);box-shadow:0 0 7px rgba(127,200,182,.9);}',
     '@keyframes lxExtSpin{to{transform:rotate(360deg)}}',
-    '#lxExtOrb .core{font-family:"JiangChengLvDongSong","Songti SC","STSong","Noto Serif SC",serif;font-size:11.5px;letter-spacing:.18em;color:#2b4f48;transform:translateX(.09em);white-space:nowrap;line-height:1;}',
+    '#lxExtOrb .core{font-family:"JiangChengLvDongSong","Songti SC","STSong","Noto Serif SC",serif;font-size:calc(var(--lxO,52px)*.22);letter-spacing:.18em;color:#2b4f48;transform:translateX(.09em);white-space:nowrap;line-height:1;}',
     '#lxExtOrb.is-grab{box-shadow:0 18px 34px -12px rgba(18,72,60,.55),0 0 0 4px rgba(127,200,182,.14);}',
     '#lxExtOrb.is-on{box-shadow:0 12px 26px -10px rgba(18,72,60,.5),0 0 0 3px rgba(127,200,182,.18),inset 0 1px 0 #fff;}',
     '#lxExtOrb.is-on .sp{opacity:.3;}',
@@ -47,7 +57,7 @@ var lxExtReady = false;
     '#lxExtFan.is-on{display:block;}',
     '#lxExtFan svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;opacity:0;transition:opacity .3s;}',
     '#lxExtFan.is-on svg{opacity:1;}',
-    '.lxExtN{position:absolute;width:46px;height:46px;margin:0;padding:0;border-radius:50%;pointer-events:auto;cursor:pointer;',
+    '.lxExtN{position:absolute;width:var(--lxN,41px);height:var(--lxN,41px);margin:0;padding:0;border-radius:50%;pointer-events:auto;cursor:pointer;',
     'border:1px solid rgba(127,200,182,.48);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;',
     '-webkit-tap-highlight-color:transparent;',
     'background:radial-gradient(circle at 38% 30%,rgba(255,255,255,.98),rgba(236,247,243,.95) 68%,rgba(220,239,232,.88));',
@@ -56,18 +66,19 @@ var lxExtReady = false;
     'transition:transform .34s cubic-bezier(.2,.9,.2,1),opacity .26s,box-shadow .25s;}',
     '.lxExtN.is-in{opacity:1;transform:translate(-50%,-50%) scale(1);}',
     '.lxExtN:active{box-shadow:0 12px 24px -14px rgba(18,72,60,.6),0 0 0 4px rgba(127,200,182,.22),inset 0 1px 0 #fff;}',
-    '.lxExtN b{font-family:"JiangChengLvDongSong","Songti SC",serif;font-weight:400;font-size:14.5px;line-height:1;color:#2c5750;letter-spacing:.03em;}',
-    '.lxExtN em{font-style:normal;font-family:-apple-system,"PingFang SC",sans-serif;font-size:8px;line-height:1;color:#78958f;letter-spacing:.03em;transform:scale(.95);}',
+    '.lxExtN b{font-family:"JiangChengLvDongSong","Songti SC",serif;font-weight:400;font-size:calc(var(--lxN,41px)*.34);line-height:1;color:#2c5750;letter-spacing:.03em;}',
+    '.lxExtN em{font-style:normal;font-family:-apple-system,"PingFang SC",sans-serif;font-size:calc(var(--lxN,41px)*.20);line-height:1;color:#78958f;letter-spacing:.03em;transform:scale(.95);}',
 
     /* 小窗 */
     '#lxExtCard{position:fixed;z-index:2147483560;display:none;flex-direction:column;overflow:hidden;',
-    'border-radius:18px;border:1px solid rgba(127,200,182,.4);background:#fbfdfc;',
+    'border-radius:18px;border:1px solid rgba(127,200,182,.4);background:rgba(251,253,252,.94);',
+    '-webkit-backdrop-filter:blur(16px) saturate(1.06);backdrop-filter:blur(16px) saturate(1.06);',
     'box-shadow:0 20px 44px -20px rgba(12,48,40,.42),0 0 0 1px rgba(255,255,255,.7) inset;',
     'opacity:0;transform:translateY(10px) scale(.986);transform-origin:50% 100%;',
     'transition:opacity .22s,transform .3s cubic-bezier(.2,.9,.2,1);}',
     '#lxExtCard.is-on{display:flex;opacity:1;transform:none;}',
     '#lxExtCard::after{content:"";position:absolute;left:0;right:0;bottom:0;height:16px;pointer-events:none;border-radius:0 0 17px 17px;',
-    'background:linear-gradient(180deg,rgba(251,253,252,0),rgba(251,253,252,.92));}',
+    'background:linear-gradient(180deg,rgba(251,253,252,0),rgba(251,253,252,.9));}',
     '#lxExtHead{flex:0 0 auto;height:40px;display:flex;align-items:center;gap:7px;padding:0 7px 0 10px;',
     'border-bottom:1px solid rgba(127,200,182,.26);background:linear-gradient(180deg,#ffffff,#f3faf7);}',
     '#lxExtHead b{flex:0 0 auto;font-family:"JiangChengLvDongSong","Songti SC",serif;font-weight:400;font-size:10.5px;letter-spacing:.06em;color:#2c5750;',
@@ -116,14 +127,43 @@ var lxExtReady = false;
 
   /* ---------------- 数据（只取当前角色当前聊天） ---------------- */
   function ctx() { try { return SillyTavern.getContext(); } catch (e) { return null; } }
+  var TAGS = ['状态', '计划', '日记', '手机', '书摘', '自由', '日历'];
+  var TAGRE = /[\[【](状态|计划|日记|手机|书摘|自由|日历)[\]】]/;
+
+  /* 宽松取值：正常标签 / 只有闭合标签 / 完全没标签（靠 [状态][计划] 分段）都能接 */
+  function extractData(raw) {
+    var s = String(raw || '');
+    if (!s.trim()) return '';
+    s = s.replace(/```[a-zA-Z]*/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+    var open = /<\s*lx_data\s*>/i.exec(s);
+    var close = s.search(/<\s*\/\s*lx_data\s*>/i);
+    var start = open ? open.index + open[0].length : -1;
+    var end = close >= 0 ? close : s.length;
+    var cut = '';
+    if (start >= 0 && end > start) cut = s.slice(start, end);
+    else if (close >= 0) cut = s.slice(0, close);          /* 开头那一截被吃掉 */
+    var m = TAGRE.exec(cut);
+    if (!m) {
+      var m2 = TAGRE.exec(s);
+      if (!m2) return '';
+      cut = s.slice(m2.index, end);
+    } else {
+      cut = cut.slice(m.index);
+    }
+    return cut.replace(/[\[\u3010](状态|计划|日记|手机|书摘|自由|日历)[\]\u3011]/g, '[$1]')
+      .replace(/<\s*\/\s*lx_data\s*>/ig, '')
+      .replace(/\s+$/, '')
+      .replace(/^[\r\n]+/, '');
+  }
+
   function lastData() {
     var c = ctx();
     if (!c || !c.chat) return '';
     for (var i = c.chat.length - 1; i >= 0; i--) {
       var m = c.chat[i];
       if (!m || m.is_system) continue;
-      var hit = String(m.mes || '').match(/<lx_data>([\s\S]*?)<\/lx_data>/);
-      if (hit) return hit[1].replace(/^[\r\n]+/, '').replace(/\s+$/, '');
+      var got = extractData(m.mes);
+      if (got) return got;
     }
     return '';
   }
@@ -190,15 +230,16 @@ var lxExtReady = false;
     if (!fan) return;
     var x = realX(), y = realY(), w = W(), h = H();
     var center = Math.atan2(H() * 0.45 - y, W() / 2 - x) * 180 / Math.PI;
-    var R = 90, SPREAD = 32, MAR = R_NODE + 8;
+    var R = SZ.R, SPREAD = 32, MAR = Math.round(SZ.node / 2) + 8;
     var best = center, gap = 1e9, bestPts = null;
     for (var off = -64; off <= 64; off += 4) {
       var base = center + off, cost = 0, pts = [];
       for (var i = 0; i < 5; i++) {
         var d = base - SPREAD * 2 + i * SPREAD, a = d * Math.PI / 180;
         var nx = x + R * Math.cos(a), ny = y + R * Math.sin(a);
-        var ox = Math.max(0, MAR - (nx - R_NODE)) + Math.max(0, (nx + R_NODE) - (w - MAR));
-        var oy = Math.max(0, MAR - (ny - R_NODE)) + Math.max(0, (ny + R_NODE) - (h - MAR));
+        var rn = SZ.node / 2;
+        var ox = Math.max(0, MAR - (nx - rn)) + Math.max(0, (nx + rn) - (w - MAR));
+        var oy = Math.max(0, MAR - (ny - rn)) + Math.max(0, (ny + rn) - (h - MAR));
         cost += ox * ox + oy * oy;
         pts.push([nx, ny]);
       }
@@ -325,8 +366,26 @@ var lxExtReady = false;
     card.style.maxHeight = cap + 'px';
   }
 
+  /* 六项数值这一楼没写就藏起来，别留一排“—” */
+  function polish() {
+    var d = null;
+    try { d = iframe.contentWindow.document; } catch (e) { return; }
+    if (!d) return;
+    var btns = d.querySelectorAll('.lx-stat'), shown = 0;
+    for (var i = 0; i < btns.length; i++) {
+      var b = btns[i].querySelector('.lx-stat-val b');
+      var v = b ? String(b.textContent).trim() : '';
+      var empty = !v || v === '—' || v === '-' || v === '–' || v === '【  】';
+      btns[i].style.display = empty ? 'none' : '';
+      if (!empty) shown++;
+    }
+    var wrap = d.querySelector('.lx-st-stats');
+    if (wrap) wrap.style.display = shown ? '' : 'none';
+  }
+
   function measure() {
     if (!open || !iframe || !card) return;
+    polish();
     var doc = null;
     try { doc = iframe.contentWindow.document; } catch (e) { return; }
     if (!doc || !doc.body) return;
@@ -375,6 +434,7 @@ var lxExtReady = false;
   /* ---------------- 球 ---------------- */
   function build() {
     css();
+    calcSizes();
     if (orb && orb.isConnected) return;
     orb = el('button'); orb.id = 'lxExtOrb'; orb.type = 'button';
     orb.setAttribute('aria-label', '仪表盘');
@@ -383,6 +443,7 @@ var lxExtReady = false;
     if (!load()) { pos.x = W() - 32; pos.y = H() - 100; pos.edge = 'r'; }
     applyPos();
     bind();
+    window.addEventListener('resize', calcSizes);
   }
 
   function bind() {
@@ -438,7 +499,112 @@ var lxExtReady = false;
     });
   }
 
-  function boot() { build(); }
+
+  /* ---------------- 把正文里的 <lx_data> 段落抠掉（不用正则） ---------------- */
+  var cleanTimer = null, cleanBusy = false;
+
+  function cutRanges(el, ranges) {
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
+    var nodes = [], off = 0, n;
+    while ((n = walker.nextNode())) {
+      nodes.push([n, off, off + n.nodeValue.length]);
+      off += n.nodeValue.length;
+    }
+    for (var k = 0; k < nodes.length; k++) {
+      var node = nodes[k][0], s = nodes[k][1], e = nodes[k][2], keep = '';
+      for (var i = s; i < e; i++) {
+        var hit = false;
+        for (var r = 0; r < ranges.length; r++) {
+          if (i >= ranges[r][0] && i < ranges[r][1]) { hit = true; break; }
+        }
+        if (!hit) keep += node.nodeValue.charAt(i - s);
+      }
+      if (keep !== node.nodeValue) node.nodeValue = keep;
+    }
+  }
+
+  function tidy(el) {
+    var ps = el.querySelectorAll('p, div');
+    for (var i = ps.length - 1; i >= 0; i--) {
+      var e = ps[i];
+      if (e.children.length === 0 && !e.textContent.trim()) {
+        if (e.tagName === 'P') e.parentNode.removeChild(e);
+      }
+    }
+    if (!el.textContent.trim() && !el.querySelector('img,canvas,svg')) {
+      el.style.setProperty('display', 'none', 'important');
+      el.setAttribute('data-lx-hidden', '1');
+    }
+  }
+
+  function stripOne(el) {
+    var t = el.textContent || '';
+    var hasTag = t.indexOf('lx_data') >= 0;
+    var ranges = [], m, re;
+
+    /* 1) 标准标签段 */
+    if (hasTag) {
+      re = /<lx_data>[\s\S]*?(?:<\/lx_data>|$)/g;
+      while ((m = re.exec(t))) {
+        ranges.push([m.index, m.index + m[0].length]);
+        if (!m[0].length) re.lastIndex++;
+      }
+      /* 2) 只有闭合标签：从第一个分段标记切到 </lx_data> */
+      if (ranges.length === 0) {
+        var cm = /<\s*\/\s*lx_data\s*>/i.exec(t);
+        var first = TAGRE.exec(t);
+        if (cm && first) ranges.push([first.index, cm.index + cm[0].length]);
+      }
+    } else {
+      /* 3) 完全没标签：分段标记 ≥2 个，或紧跟 名字：/好感度： 才认定是数据块 */
+      var first2 = TAGRE.exec(t);
+      if (first2) {
+        var rest = t.slice(first2.index);
+        var marks = rest.match(new RegExp(TAGRE.source, 'g')) || [];
+        var distinct = {};
+        for (var d = 0; d < marks.length; d++) distinct[marks[d]] = 1;
+        var looksData = (Object.keys(distinct).length >= 2) || /(名字|好感度|信任度)\s*[:：]/.test(rest.slice(0, 120));
+        if (looksData) ranges.push([first2.index, t.length]);
+      }
+    }
+
+    if (!ranges.length) {
+      if (el.getAttribute('data-lx-hidden') === '1') {
+        el.style.removeProperty('display');
+        el.removeAttribute('data-lx-hidden');
+      }
+      return;
+    }
+    cutRanges(el, ranges);
+    tidy(el);
+  }
+
+  function cleanBodies() {
+    if (cleanBusy) return;
+    cleanBusy = true;
+    try {
+      var els = document.querySelectorAll('.mes_text');
+      for (var i = 0; i < els.length; i++) {
+        try { stripOne(els[i]); } catch (e) {}
+      }
+    } catch (e) {}
+    cleanBusy = false;
+  }
+
+  function scheduleClean(ms) {
+    clearTimeout(cleanTimer);
+    cleanTimer = setTimeout(cleanBodies, ms == null ? 260 : ms);
+  }
+
+  function watchBodies() {
+    var root = document.getElementById('chat') || document.body;
+    if (typeof MutationObserver === 'undefined') { scheduleClean(400); return; }
+    var mo = new MutationObserver(function () { scheduleClean(240); });
+    mo.observe(root, { childList: true, subtree: true, characterData: true });
+    scheduleClean(300);
+  }
+
+  function boot() { build(); watchBodies(); }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
 
@@ -452,8 +618,9 @@ var lxExtReady = false;
     var c = ctx();
     if (!c || !c.eventSource || !c.event_types) return;
     var ev = c.event_types;
-    if (ev.CHAT_CHANGED) c.eventSource.on(ev.CHAT_CHANGED, function () { closeCard(true); closeFan(); });
+    if (ev.CHAT_CHANGED) c.eventSource.on(ev.CHAT_CHANGED, function () { closeCard(true); closeFan(); scheduleClean(80); });
     if (ev.MESSAGE_RECEIVED) c.eventSource.on(ev.MESSAGE_RECEIVED, function () {
+      scheduleClean(60);
       if (open) setTimeout(function () { feed(cur); pump(); }, 500);
     });
   }, 500);
@@ -471,6 +638,7 @@ var lxExtReady = false;
   }, 2000);
 
   window.lxExt = {
+    clean: cleanBodies,
     fan: openFan, closeFan: closeFan, card: openCard, close: closeCard,
     refresh: function () { if (open) { feed(cur); pump(); } }, data: lastData
   };
