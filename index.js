@@ -95,6 +95,14 @@ var lxExtReady = false;
     '#lxExtRing,#lxExtMask,#lxExtArc,#lxExtX,#lxExtPClose{display:none!important;visibility:hidden!important;}',
     '#lxExtPanel{display:none!important;visibility:hidden!important;}',
 
+    '#lxExtEmpty{position:absolute;left:0;right:0;top:40px;bottom:0;display:none;flex-direction:column;align-items:center;',
+    'justify-content:center;gap:8px;padding:0 26px 10px;text-align:center;background:#fdfefd;z-index:3;}',
+    '#lxExtEmpty.is-on{display:flex;}',
+    '#lxExtEmpty b{font-family:"JiangChengLvDongSong","Songti SC",serif;font-weight:400;font-size:14px;letter-spacing:.14em;color:#2b4f48;}',
+    '#lxExtEmpty i{display:block;width:26px;height:1px;background:rgba(127,200,182,.6);}',
+    '#lxExtEmpty p{margin:0;font:11.5px/1.85 -apple-system,"PingFang SC",sans-serif;color:#7d928d;letter-spacing:.02em;}',
+    '#lxExtEmpty p b2{color:#2c5750;}',
+
     /* 提示 */
     '#lxExtTip{position:fixed;left:50%;bottom:88px;transform:translateX(-50%);z-index:2147483601;max-width:76vw;padding:7px 13px;',
     'border-radius:11px;background:rgba(28,46,43,.92);color:#eaf5f1;font:12px/1.5 -apple-system,"PingFang SC",sans-serif;display:none;}'
@@ -316,6 +324,19 @@ var lxExtReady = false;
       if (open) { feed(cur); measure(); }
     });
     card.appendChild(iframe);
+    var emp = el('div'); emp.id = 'lxExtEmpty';
+    emp.innerHTML = '<b>还没有数据</b><i></i><p>聊天里还没出现数据段。<br>让 AI 回复一次带状态的内容，这里就会自动长出来。</p>';
+    card.appendChild(emp);
+  }
+
+  function showEmpty(on) {
+    var e = card && card.querySelector('#lxExtEmpty');
+    if (e) e.classList[on ? 'add' : 'remove']('is-on');
+    if (iframe) iframe.style.visibility = on ? 'hidden' : '';
+    if (card) {
+      if (on) { card.style.height = '198px'; if (iframe) iframe.style.height = '1px'; }
+      else { card.style.removeProperty('height'); }
+    }
   }
 
   function inject() {
@@ -338,7 +359,8 @@ var lxExtReady = false;
     try { w = iframe.contentWindow; } catch (e) { w = null; }
     if (!w || !w.lxFill) return false;
     var d = lastData();
-    if (!d) { tip('这条还没有 <lx_data> 数据'); return false; }
+    if (!d) { showEmpty(true); return false; }
+    showEmpty(false);
     try {
       w.lxFill(d);
       if (w.lxOpenCard) w.lxOpenCard(n || cur);
@@ -388,6 +410,8 @@ var lxExtReady = false;
 
   function measure() {
     if (!open || !iframe || !card) return;
+    var empEl = card.querySelector('#lxExtEmpty');
+    if (empEl && empEl.classList.contains('is-on')) return;
     polish();
     var doc = null;
     try { doc = iframe.contentWindow.document; } catch (e) { return; }
@@ -415,9 +439,9 @@ var lxExtReady = false;
     place();
     card.classList.add('is-on');
     orb.classList.add('is-on');
-    inject(); feed(cur);
+    inject(); showEmpty(!lastData()); feed(cur);
     pump();
-    setTimeout(function () { if (!lastData()) tip('这条还没有 <lx_data> 数据'); }, 900);
+
   }
 
   function closeCard(quiet) {
@@ -503,8 +527,24 @@ var lxExtReady = false;
   }
 
 
-  /* ---------------- 把正文里的 <lx_data> 段落抠掉（不用正则） ---------------- */
+  /* ---------------- 把正文里的数据段抠掉（纯 DOM，不用正则规则） ---------------- */
   var cleanTimer = null, cleanBusy = false;
+
+  var SEC = '状态|计划|日记|手机|书摘|自由|日历|记录|浏览|通话|账单|相册|地图|消息|音乐|备忘|便签|日程|任务|作息|名片|支付|聊天|朋友圈';
+  var SECRE = new RegExp('[\\[【](' + SEC + ')[\\]】]');
+  var BRE = /[\[【][^\[\]【】\n]{1,10}[\]】]/;
+  var KEYRE = /(名字|身份|好感度|信任度|体力|欲望|心动|理智|款式|标题|署名|批注|地点|天气|温度|读到|次数)\s*[:：]/;
+
+  function countOf(txt, re) {
+    var g = new RegExp(re.source, 'g');
+    var arr = txt.match(g);
+    return arr ? arr.length : 0;
+  }
+  function uniqOf(txt, re) {
+    var g = new RegExp(re.source, 'g'), arr = txt.match(g), o = {}, c = 0;
+    if (arr) for (var i = 0; i < arr.length; i++) { if (!o[arr[i]]) { o[arr[i]] = 1; c++; } }
+    return c;
+  }
 
   function cutRanges(el, ranges) {
     var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
@@ -514,86 +554,66 @@ var lxExtReady = false;
       off += n.nodeValue.length;
     }
     for (var k = 0; k < nodes.length; k++) {
-      var node = nodes[k][0], s = nodes[k][1], e = nodes[k][2], keep = '';
-      for (var i = s; i < e; i++) {
+      var node = nodes[k][0], s0 = nodes[k][1], e0 = nodes[k][2], keep = '';
+      if (e0 <= ranges[0][0] || s0 >= ranges[ranges.length - 1][1]) continue;
+      for (var i = s0; i < e0; i++) {
         var hit = false;
         for (var r = 0; r < ranges.length; r++) {
           if (i >= ranges[r][0] && i < ranges[r][1]) { hit = true; break; }
         }
-        if (!hit) keep += node.nodeValue.charAt(i - s);
+        if (!hit) keep += node.nodeValue.charAt(i - s0);
       }
       if (keep !== node.nodeValue) node.nodeValue = keep;
     }
   }
 
   function tidy(el) {
-    var ps = el.querySelectorAll('p, div');
+    var ps = el.querySelectorAll('p');
     for (var i = ps.length - 1; i >= 0; i--) {
       var e = ps[i];
-      if (e.children.length === 0 && !e.textContent.trim()) {
-        if (e.tagName === 'P') e.parentNode.removeChild(e);
+      if (!e.children.length && !e.textContent.trim()) {
+        try { e.parentNode.removeChild(e); } catch (err) {}
       }
     }
-    if (!el.textContent.trim() && !el.querySelector('img,canvas,svg')) {
-      el.style.setProperty('display', 'none', 'important');
+    var inner = el.textContent.replace(/[\s\u200b]/g, '');
+    var mes = el.closest ? el.closest('.mes') : null;
+    if (!inner && !el.querySelector('img,canvas,svg,video')) {
       el.setAttribute('data-lx-hidden', '1');
+      if (mes) { mes.setAttribute('data-lx-mes-hidden', '1'); mes.style.setProperty('display', 'none', 'important'); }
+    } else if (mes && mes.getAttribute('data-lx-mes-hidden') === '1') {
+      mes.removeAttribute('data-lx-mes-hidden'); mes.style.removeProperty('display');
     }
   }
 
-  var BRE = /[\[【][^\[\]【】\n]{1,10}[\]】]/g;
-  var SECRE = /[\[【](状态|计划|日记|手机|书摘|自由|日历|记录|浏览|通话|账单|相册|地图|消息|音乐|备忘|便签|日程|任务|作息)[\]】]/g;
-
-  /* 数据块起点：优先认已知段落标记，其次找“后面紧跟两个 键： 值”的方括号 */
-  function findStart(t) {
-    SECRE.lastIndex = 0;
-    var m = SECRE.exec(t);
-    if (m) return m.index;
-    BRE.lastIndex = 0;
-    while ((m = BRE.exec(t))) {
-      if (isDataish(t.slice(m.index, m.index + 240))) return m.index;
-    }
-    return 0;
-  }
-  var KEYRE = /(名字|身份|好感度|信任度|体力|欲望|心动|理智|款式|标题|署名|批注|地点|天气|温度|读|第\s?\d+\s?次)\s*[:：]/g;
-
-  function isDataish(txt) {
-    var keys = (txt.match(KEYRE) || []).length;
-    if (keys >= 2) return true;
-    var marks = (txt.match(BRE) || []);
-    var uniq = {};
-    for (var i = 0; i < marks.length; i++) uniq[marks[i]] = 1;
-    return Object.keys(uniq).length >= 2 && keys >= 1;
-  }
-
+  /* 只处理「确实是数据块」的情形，宁漏不误杀 */
   function stripOne(el) {
     var t = el.textContent || '';
+    if (t.length > 40000) return;
     var ranges = [], m, re;
 
-    /* 1) 有开标签：开→闭（或→结尾） */
+    /* 1) 有开标签：到最近的闭标签，没有就吃到结尾 */
     if (/<\s*lx_data\s*>/i.test(t)) {
-      re = /<lx_data>[\s\S]*?(?:<\/lx_data>|$)/g;
-      while ((m = re.exec(t))) {
-        ranges.push([m.index, m.index + m[0].length]);
-        if (!m[0].length) re.lastIndex++;
+      re = /<\s*lx_data\s*>[\s\S]*?(?:<\s*\/\s*lx_data\s*>|$)/gi;
+      var mm = t.match(re) || [];
+      var idx = 0;
+      for (var i = 0; i < mm.length; i++) {
+        idx = t.indexOf(mm[i], idx);
+        if (idx < 0) break;
+        ranges.push([idx, idx + mm[i].length]);
+        idx += mm[i].length;
       }
     }
-
-    /* 2) 只有闭合标签（数据被拆到下一楼）：从该楼起点切到 </lx_data> */
-    if (!ranges.length) {
+    /* 2) 只有闭标签：这一楼基本就是数据尾巴 */
+    if (!ranges.length && /<\s*\/\s*lx_data\s*>/i.test(t)) {
       var cm = /<\s*\/\s*lx_data\s*>/i.exec(t);
-      if (cm) {
-        var from = Math.min(findStart(t), cm.index);
-        ranges.push([from, cm.index + cm[0].length]);
-      }
+      ranges.push([0, cm.index + cm[0].length]);
     }
-
-    /* 3) 完全没有标签：靠分段标记 + 键值对认定 */
+    /* 3) 完全无标签：至少 2 种段落标记 + 3 个键值对，才认 */
     if (!ranges.length) {
-      var st = findStart(t);
-      var hasSec = false;
-      SECRE.lastIndex = 0;
-      hasSec = SECRE.test(t);
-      if (hasSec || isDataish(t.slice(st, st + 240))) ranges.push([st, t.length]);
+      var sm = SECRE.exec(t), bm = BRE.exec(t);
+      var st = sm ? sm.index : (bm ? bm.index : -1);
+      var tail = st >= 0 ? t.slice(st) : '';
+      if (st >= 0 && countOf(tail, KEYRE) >= 3 && uniqOf(tail, BRE) >= 2) ranges.push([st, t.length]);
     }
 
     if (!ranges.length) {
@@ -610,9 +630,11 @@ var lxExtReady = false;
   function cleanBodies() {
     if (cleanBusy) return;
     cleanBusy = true;
+    var t0 = Date.now();
     try {
       var els = document.querySelectorAll('.mes_text');
       for (var i = 0; i < els.length; i++) {
+        if (Date.now() - t0 > 40) break;      /* 超时立刻放手，绝不卡住界面 */
         try { stripOne(els[i]); } catch (e) {}
       }
     } catch (e) {}
@@ -621,15 +643,18 @@ var lxExtReady = false;
 
   function scheduleClean(ms) {
     clearTimeout(cleanTimer);
-    cleanTimer = setTimeout(cleanBodies, ms == null ? 260 : ms);
+    cleanTimer = setTimeout(cleanBodies, ms == null ? 300 : ms);
   }
 
+  var mo = null, watchTries = 0;
   function watchBodies() {
-    var root = document.getElementById('chat') || document.body;
-    if (typeof MutationObserver === 'undefined') { scheduleClean(400); return; }
-    var mo = new MutationObserver(function () { scheduleClean(240); });
-    mo.observe(root, { childList: true, subtree: true, characterData: true });
-    scheduleClean(300);
+    if (typeof MutationObserver === 'undefined') return;
+    var root = document.getElementById('chat');
+    if (!root) { if (watchTries++ < 30) setTimeout(watchBodies, 800); return; }
+    if (mo) { try { mo.disconnect(); } catch (e) {} }
+    mo = new MutationObserver(function () { scheduleClean(320); });
+    mo.observe(root, { childList: true, subtree: true });
+    scheduleClean(350);
   }
 
   function boot() { build(); watchBodies(); }
