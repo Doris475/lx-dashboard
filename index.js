@@ -1,7 +1,7 @@
-/* 酒馆仪表盘 · 悬浮球扩展
+/* 酒馆仪表盘 · 悬浮球扩展（轻量版）
  * 装法：扩展 → 输入扩展程序的 Git URL → 填仓库地址 → 仅为我安装。
- * 交互：右下角一颗球 → 点开是环形入口（01-05 围绕中间 × 排一圈）
- *      → 点某一号，整屏打开那张卡 → 卡头 × 回环形 → 点中间 × 收起。
+ * 交互：一颗球，点开 → 五颗小球围着它排成扇面 → 点某一颗 → 原地弹出小窗卡片
+ *      → 小窗右上角 × 或再点一次球 → 收起。全程不遮屏、不跳页。
  * 数据：只读「当前角色当前聊天」最后一条含 <lx_data> 的消息，角色卡之间互不影响。
  */
 var lxExtReady = false;
@@ -13,63 +13,98 @@ var lxExtReady = false;
 
   var KEY = 'lxExtOrbPos8';
   var NAMES = { 1: '状态卡', 2: '日历', 3: '计划日记', 4: '自由卡', 5: '查手机' };
-  var orb = null, ring = null, panel = null, opened = false, ringOn = false, cur = 1;
-  var drag = null, savedOverflow = null, tipTimer = null, watchTimer = null;
-  var pos = { x: 0, y: 0, edge: null };
+  var R_ORB = 28, R_NODE = 23, RING_R = 82, NODE_W = 46, HEAD_H = 40;
+
+  var orb = null, fan = null, card = null, iframe = null;
+  var cur = 1, open = false, fanOn = false, tipTimer = null;
+  var drag = null, pos = { x: 0, y: 0, edge: null }, geo = { top: 14, cap: 400, left: 12, w: 300 };
 
   function W() { return window.innerWidth; }
   function H() { return window.innerHeight; }
   function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
-  function el(tag, cls) { var e = document.createElement(tag); if (cls) e.className = cls; return e; }
+  function el(t, c) { var e = document.createElement(t); if (c) e.className = c; return e; }
 
   /* ---------------- 样式 ---------------- */
   var CSS = [
+    /* 球 */
     '#lxExtOrb{position:fixed;left:0;top:0;z-index:2147483600;width:56px;height:56px;padding:0;border-radius:50%;',
-    'border:1px solid rgba(127,200,182,.62);touch-action:none;-webkit-tap-highlight-color:transparent;',
-    'display:-webkit-box;display:grid;place-items:center;transform:translate(-50%,-50%);',
-    'background:radial-gradient(circle at 36% 28%,rgba(255,255,255,.97),rgba(230,244,239,.86) 62%,rgba(211,234,226,.76));',
-    '-webkit-backdrop-filter:blur(9px) saturate(1.15);backdrop-filter:blur(9px) saturate(1.15);',
-    'box-shadow:0 14px 30px -12px rgba(18,72,60,.45),inset 0 1px 0 rgba(255,255,255,.95);',
-    'transition:box-shadow .35s,transform .3s cubic-bezier(.2,.9,.2,1),opacity .3s;}',
-    '#lxExtOrb .sp{position:absolute;inset:6px;border-radius:50%;border:1px dashed rgba(127,200,182,.5);animation:lxExtspin 24s linear infinite;}',
-    '#lxExtOrb .sp i{position:absolute;top:-2px;left:50%;width:4px;height:4px;margin-left:-2px;border-radius:50%;',
-    'background:rgba(93,168,152,.85);box-shadow:0 0 7px rgba(127,200,182,.9);}',
-    '@keyframes lxExtspin{to{transform:rotate(360deg)}}',
-    '#lxExtOrb .core{font-family:"JiangChengLvDongSong","Songti SC","STSong","Noto Serif SC",serif;font-size:11.5px;',
-    'letter-spacing:.18em;color:#2b4f48;transform:translateX(.09em);white-space:nowrap;}',
-    '#lxExtOrb.is-grab{box-shadow:0 20px 40px -12px rgba(18,72,60,.55),0 0 0 4px rgba(127,200,182,.14);}',
-    '#lxExtOrb.is-on{opacity:.55;background:radial-gradient(circle at 36% 28%,rgba(255,255,255,.99),rgba(127,200,182,.5) 66%,rgba(96,178,158,.42));}',
-    '#lxExtRing{position:fixed;inset:0;z-index:2147483560;display:none;}',
-    '#lxExtRing.is-on{display:block;}',
-    '#lxExtMask{position:absolute;inset:0;background:rgba(249,252,251,.93);',
-    '-webkit-backdrop-filter:blur(14px) saturate(1.08);backdrop-filter:blur(14px) saturate(1.08);opacity:0;transition:opacity .32s;}',
-    '#lxExtRing.is-on #lxExtMask{opacity:1;}',
-    '#lxExtArc{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;}',
-    '#lxExtX{position:absolute;width:76px;height:76px;margin:0;padding:0;border-radius:50%;cursor:pointer;',
-    'border:1px solid rgba(127,200,182,.55);background:radial-gradient(circle at 38% 30%,rgba(255,255,255,.99),rgba(230,244,239,.9) 66%,rgba(211,234,226,.8));',
-    'box-shadow:0 16px 34px -16px rgba(18,72,60,.42),inset 0 1px 0 rgba(255,255,255,.95);',
-    'color:#3f6f66;font-family:"JiangChengLvDongSong","Songti SC",serif;font-size:22px;line-height:1;',
-    'display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;}',
-    '#lxExtX::before{content:"";position:absolute;left:9px;top:9px;right:9px;bottom:9px;border-radius:50%;border:1px dashed rgba(127,200,182,.42);}',
-    '.lxExtN{position:absolute;width:74px;height:74px;margin:0;padding:0;border-radius:50%;cursor:pointer;',
-    'border:1px solid rgba(127,200,182,.5);background:radial-gradient(circle at 38% 30%,rgba(255,255,255,.99),rgba(236,247,243,.94) 68%,rgba(219,238,231,.86));',
-    'box-shadow:0 14px 30px -16px rgba(18,72,60,.4),inset 0 1px 0 rgba(255,255,255,.95);',
-    'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;',
-    '-webkit-tap-highlight-color:transparent;transform:scale(.72);opacity:0;',
-    'transition:transform .34s cubic-bezier(.2,.9,.2,1),opacity .3s,box-shadow .3s;}',
-    '.lxExtN b{font-family:"JiangChengLvDongSong","Songti SC",serif;font-weight:400;font-size:21px;color:#2c5750;line-height:1;letter-spacing:.04em;}',
-    '.lxExtN em{font-style:normal;font-family:-apple-system,"PingFang SC",sans-serif;font-size:9.5px;color:#75948e;letter-spacing:.06em;}',
-    '.lxExtN.is-in{transform:scale(1);opacity:1;}',
-    '.lxExtN.is-on{box-shadow:0 16px 34px -14px rgba(18,72,60,.5),0 0 0 3px rgba(127,200,182,.22),inset 0 1px 0 #fff;}',
-    '#lxExtPanel{position:fixed;left:0;top:0;width:100%;height:100%;border:0;margin:0;padding:0;',
-    'z-index:2147483500;background:#f5f9f7;display:none;}',
-    '#lxExtPanel.is-on{display:block;}',
-    '#lxExtPClose{position:fixed;right:12px;top:12px;z-index:2147483520;width:38px;height:38px;padding:0;border-radius:50%;',
-    'border:1px solid rgba(127,200,182,.5);background:rgba(255,255,255,.94);color:#3f6f66;font-family:"Songti SC",serif;',
-    'font-size:17px;line-height:1;box-shadow:0 8px 18px -10px rgba(18,72,60,.5);display:none;cursor:pointer;}',
-    '#lxExtPClose.is-on{display:flex;align-items:center;justify-content:center;}',
-    '#lxExtTip{position:fixed;left:50%;bottom:84px;transform:translateX(-50%);z-index:2147483601;padding:8px 14px;',
-    'border-radius:12px;background:rgba(30,48,45,.9);color:#eaf5f1;font:12.5px/1.5 -apple-system,"PingFang SC",sans-serif;display:none;}'
+    'border:1px solid rgba(127,200,182,.6);touch-action:none;-webkit-tap-highlight-color:transparent;cursor:pointer;',
+    'display:grid;place-items:center;transform:translate(-50%,-50%);',
+    'background:radial-gradient(circle at 36% 28%,rgba(255,255,255,.97),rgba(230,244,239,.88) 62%,rgba(212,235,227,.8));',
+    '-webkit-backdrop-filter:blur(9px) saturate(1.12);backdrop-filter:blur(9px) saturate(1.12);',
+    'box-shadow:0 12px 26px -12px rgba(18,72,60,.42),inset 0 1px 0 rgba(255,255,255,.95);',
+    'transition:box-shadow .35s,transform .3s cubic-bezier(.2,.9,.2,1),opacity .28s;}',
+    '#lxExtOrb .sp{position:absolute;inset:6px;border-radius:50%;border:1px dashed rgba(127,200,182,.5);animation:lxExtSpin 30s linear infinite;transition:opacity .3s;}',
+    '#lxExtOrb .sp i{position:absolute;top:-2px;left:50%;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:rgba(93,168,152,.85);box-shadow:0 0 7px rgba(127,200,182,.9);}',
+    '@keyframes lxExtSpin{to{transform:rotate(360deg)}}',
+    '#lxExtOrb .core{font-family:"JiangChengLvDongSong","Songti SC","STSong","Noto Serif SC",serif;font-size:11.5px;letter-spacing:.18em;color:#2b4f48;transform:translateX(.09em);white-space:nowrap;line-height:1;}',
+    '#lxExtOrb.is-grab{box-shadow:0 18px 34px -12px rgba(18,72,60,.55),0 0 0 4px rgba(127,200,182,.14);}',
+    '#lxExtOrb.is-on{box-shadow:0 12px 26px -10px rgba(18,72,60,.5),0 0 0 3px rgba(127,200,182,.18),inset 0 1px 0 #fff;}',
+    '#lxExtOrb.is-on .sp{opacity:.3;}',
+
+    /* 扇面 */
+    '#lxExtFan{position:fixed;inset:0;z-index:2147483550;display:none;pointer-events:none;}',
+    '#lxExtFan.is-on{display:block;}',
+    '#lxExtFan svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;opacity:0;transition:opacity .3s;}',
+    '#lxExtFan.is-on svg{opacity:1;}',
+    '.lxExtN{position:absolute;width:46px;height:46px;margin:0;padding:0;border-radius:50%;pointer-events:auto;cursor:pointer;',
+    'border:1px solid rgba(127,200,182,.48);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;',
+    '-webkit-tap-highlight-color:transparent;',
+    'background:radial-gradient(circle at 38% 30%,rgba(255,255,255,.98),rgba(236,247,243,.95) 68%,rgba(220,239,232,.88));',
+    'box-shadow:0 10px 22px -14px rgba(18,72,60,.45),inset 0 1px 0 rgba(255,255,255,.95);',
+    'opacity:0;transform:translate(-50%,-50%) scale(.3);',
+    'transition:transform .34s cubic-bezier(.2,.9,.2,1),opacity .26s,box-shadow .25s;}',
+    '.lxExtN.is-in{opacity:1;transform:translate(-50%,-50%) scale(1);}',
+    '.lxExtN:active{box-shadow:0 12px 24px -14px rgba(18,72,60,.6),0 0 0 4px rgba(127,200,182,.22),inset 0 1px 0 #fff;}',
+    '.lxExtN b{font-family:"JiangChengLvDongSong","Songti SC",serif;font-weight:400;font-size:14.5px;line-height:1;color:#2c5750;letter-spacing:.03em;}',
+    '.lxExtN em{font-style:normal;font-family:-apple-system,"PingFang SC",sans-serif;font-size:8px;line-height:1;color:#78958f;letter-spacing:.03em;transform:scale(.95);}',
+
+    /* 小窗 */
+    '#lxExtCard{position:fixed;z-index:2147483560;display:none;flex-direction:column;overflow:hidden;',
+    'border-radius:18px;border:1px solid rgba(127,200,182,.4);background:#fbfdfc;',
+    'box-shadow:0 20px 44px -20px rgba(12,48,40,.42),0 0 0 1px rgba(255,255,255,.7) inset;',
+    'opacity:0;transform:translateY(10px) scale(.986);transform-origin:50% 100%;',
+    'transition:opacity .22s,transform .3s cubic-bezier(.2,.9,.2,1);}',
+    '#lxExtCard.is-on{display:flex;opacity:1;transform:none;}',
+    '#lxExtCard::after{content:"";position:absolute;left:0;right:0;bottom:0;height:16px;pointer-events:none;border-radius:0 0 17px 17px;',
+    'background:linear-gradient(180deg,rgba(251,253,252,0),rgba(251,253,252,.92));}',
+    '#lxExtHead{flex:0 0 auto;height:40px;display:flex;align-items:center;gap:7px;padding:0 7px 0 10px;',
+    'border-bottom:1px solid rgba(127,200,182,.26);background:linear-gradient(180deg,#ffffff,#f3faf7);}',
+    '#lxExtHead b{flex:0 0 auto;font-family:"JiangChengLvDongSong","Songti SC",serif;font-weight:400;font-size:10.5px;letter-spacing:.06em;color:#2c5750;',
+    'background:rgba(127,200,182,.15);border:1px solid rgba(127,200,182,.4);border-radius:999px;padding:2px 6px;line-height:1.3;}',
+    '#lxExtHead .t{flex:1 1 auto;min-width:0;font-family:"JiangChengLvDongSong","Songti SC",serif;font-size:12px;letter-spacing:.13em;color:#2b4f48;',
+    'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+    '#lxExtHead .g{flex:0 0 auto;width:16px;height:14px;pointer-events:none;opacity:.45;',
+    'background-image:radial-gradient(circle at 3px 3px,rgba(127,200,182,.85) 1.1px,transparent 1.3px);background-size:8px 6px;background-position:50% 50%;}',
+    '#lxExtX2{flex:0 0 auto;width:26px;height:26px;padding:0;border-radius:50%;border:1px solid rgba(127,200,182,.4);',
+    'background:rgba(255,255,255,.9);color:#5b7d77;font-family:"Songti SC",serif;font-size:14px;line-height:1;cursor:pointer;',
+    '-webkit-tap-highlight-color:transparent;display:flex;align-items:center;justify-content:center;}',
+    '#lxExtPanel{display:block;width:100%;flex:1 1 auto;border:0;margin:0;padding:0;background:transparent;overflow:hidden;}',
+
+    /* 提示 */
+    '#lxExtTip{position:fixed;left:50%;bottom:88px;transform:translateX(-50%);z-index:2147483601;max-width:76vw;padding:7px 13px;',
+    'border-radius:11px;background:rgba(28,46,43,.92);color:#eaf5f1;font:12px/1.5 -apple-system,"PingFang SC",sans-serif;display:none;}'
+  ].join('');
+
+  /* iframe 内部（把整张卡压成一张窄卡，去掉卡头/页签/外壳） */
+  var MINI = [
+    'html.is-frame.is-ext-mini,html.is-frame.is-ext-mini body{height:auto!important;min-height:0!important;max-height:none!important;',
+    'overflow-x:hidden!important;background:transparent!important;}',
+    'html.is-frame.is-ext-mini body{padding:0!important;display:block!important;overscroll-behavior:contain;}',
+    'html.is-frame.is-ext-mini .lx-fab,html.is-frame.is-ext-mini .lx-ring,html.is-frame.is-ext-mini .lx-frow,',
+    'html.is-frame.is-ext-mini .lx-card-bar,html.is-frame.is-ext-mini .lx-tline,html.is-frame.is-ext-mini .lx-nowpop{display:none!important;}',
+    'html.is-frame.is-ext-mini .lx-card{position:static!important;inset:auto!important;left:auto!important;top:auto!important;',
+    'width:100%!important;max-width:none!important;min-height:0!important;height:auto!important;max-height:none!important;',
+    'margin:0!important;border:0!important;border-radius:0!important;box-shadow:none!important;background:transparent!important;',
+    'opacity:1!important;transform:none!important;overflow:visible!important;display:block!important;}',
+    'html.is-frame.is-ext-mini .lx-card-body{height:auto!important;max-height:none!important;min-height:0!important;',
+    'overflow:visible!important;padding:6px 6px 10px!important;}',
+    'html.is-frame.is-ext-mini .lx-card-body .sec-stage{padding:0!important;}',
+    'html.is-frame.is-ext-mini .lx-ph{width:min(100%,268px)!important;margin:2px auto 0!important;}',
+    'html.is-frame.is-ext-mini .lx-ph-frame{padding:7px 7px 8px!important;border-radius:28px!important;}',
+    'html.is-frame.is-ext-mini .lx-ph-screen{min-height:248px!important;}',
+    'html.is-frame.is-ext-mini .lx-ph-body{max-height:250px!important;}',
+    'html.is-frame.is-ext-mini .lx-ph-cap{display:none!important;}'
   ].join('');
 
   function css() {
@@ -87,8 +122,7 @@ var lxExtReady = false;
     for (var i = c.chat.length - 1; i >= 0; i--) {
       var m = c.chat[i];
       if (!m || m.is_system) continue;
-      var t = String(m.mes || '');
-      var hit = t.match(/<lx_data>([\s\S]*?)<\/lx_data>/);
+      var hit = String(m.mes || '').match(/<lx_data>([\s\S]*?)<\/lx_data>/);
       if (hit) return hit[1].replace(/^[\r\n]+/, '').replace(/\s+$/, '');
     }
     return '';
@@ -111,180 +145,232 @@ var lxExtReady = false;
     return false;
   }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(pos)); } catch (e) {} }
+  function realX() { return pos.edge === 'l' ? 32 : (pos.edge === 'r' ? W() - 32 : clamp(pos.x, 30, W() - 30)); }
+  function realY() { return clamp(pos.y, 34, H() - 34); }
   function applyPos() {
     if (!orb) return;
-    var x = pos.x, y = clamp(pos.y, 30, H() - 30);
-    if (pos.edge === 'l') x = 32;
-    else if (pos.edge === 'r') x = W() - 32;
-    orb.style.left = Math.round(x) + 'px';
-    orb.style.top = Math.round(y) + 'px';
+    orb.style.left = Math.round(realX()) + 'px';
+    orb.style.top = Math.round(realY()) + 'px';
   }
   function snap() {
-    if (pos.x <= 44) pos.edge = 'l';
-    else if (pos.x >= W() - 44) pos.edge = 'r';
+    if (pos.x <= 46) pos.edge = 'l';
+    else if (pos.x >= W() - 46) pos.edge = 'r';
     else pos.edge = null;
     applyPos(); save();
   }
 
-  /* ---------------- 环形入口 ---------------- */
-  function buildRing() {
-    if (ring) return;
-    ring = el('div'); ring.id = 'lxExtRing';
-    ring.innerHTML = '<div id="lxExtMask"></div><svg id="lxExtArc"></svg>' +
-      '<button id="lxExtX" type="button" aria-label="收起"><span>×</span></button>';
-    document.body.appendChild(ring);
-    ring.querySelector('#lxExtMask').addEventListener('click', closeRing);
-    ring.querySelector('#lxExtX').addEventListener('click', function (e) {
-      e.stopPropagation(); closeRing();
-    });
+  /* ---------------- 扇面 ---------------- */
+  function buildFan() {
+    if (fan) return;
+    fan = el('div'); fan.id = 'lxExtFan';
+    fan.innerHTML = '<svg></svg>';
+    document.body.appendChild(fan);
     for (var n = 1; n <= 5; n++) {
       var b = el('button', 'lxExtN');
       b.type = 'button';
       b.setAttribute('data-n', String(n));
       b.innerHTML = '<b>0' + n + '</b><em>' + NAMES[n] + '</em>';
       (function (num) {
-        b.addEventListener('click', function (e) { e.stopPropagation(); openCard(num); });
+        b.addEventListener('click', function (e) {
+          e.stopPropagation(); e.preventDefault();
+          openCard(num);
+        });
       })(n);
-      ring.appendChild(b);
+      fan.appendChild(b);
     }
-    layoutRing();
-    window.addEventListener('resize', function () { if (ringOn) layoutRing(); });
   }
 
-  function layoutRing() {
-    if (!ring) return;
-    var w = W(), h = H();
-    var cx = w / 2, cy = h * 0.42, R = Math.min(134, w * 0.35);
-    var xb = ring.querySelector('#lxExtX');
-    xb.style.left = (cx - 38) + 'px';
-    xb.style.top = (cy - 38) + 'px';
-    var angs = [22, 58, 90, 122, 158];
-    var nodes = ring.querySelectorAll('.lxExtN');
-    for (var i = 0; i < nodes.length; i++) {
-      var a = angs[i] * Math.PI / 180;
-      nodes[i].style.left = (cx + R * Math.cos(a) - 37) + 'px';
-      nodes[i].style.top = (cy + R * Math.sin(a) - 37) + 'px';
-      nodes[i].style.transitionDelay = (i * 34) + 'ms';
+  function dirAngle() {
+    var dx = W() / 2 - realX(), dy = H() * 0.45 - realY();
+    if (Math.abs(dx) + Math.abs(dy) < 6) return -90;
+    return Math.atan2(dy, dx) * 180 / Math.PI;
+  }
+
+  function layoutFan() {
+    if (!fan) return;
+    var x = realX(), y = realY(), w = W(), h = H();
+    var center = Math.atan2(H() * 0.45 - y, W() / 2 - x) * 180 / Math.PI;
+    var R = 90, SPREAD = 32, MAR = R_NODE + 8;
+    var best = center, gap = 1e9, bestPts = null;
+    for (var off = -64; off <= 64; off += 4) {
+      var base = center + off, cost = 0, pts = [];
+      for (var i = 0; i < 5; i++) {
+        var d = base - SPREAD * 2 + i * SPREAD, a = d * Math.PI / 180;
+        var nx = x + R * Math.cos(a), ny = y + R * Math.sin(a);
+        var ox = Math.max(0, MAR - (nx - R_NODE)) + Math.max(0, (nx + R_NODE) - (w - MAR));
+        var oy = Math.max(0, MAR - (ny - R_NODE)) + Math.max(0, (ny + R_NODE) - (h - MAR));
+        cost += ox * ox + oy * oy;
+        pts.push([nx, ny]);
+      }
+      if (cost < gap) { gap = cost; best = base; bestPts = pts; }
     }
-    var svg = ring.querySelector('#lxExtArc');
+    var nodes = fan.querySelectorAll('.lxExtN');
+    for (var j = 0; j < nodes.length; j++) {
+      nodes[j].style.left = Math.round(bestPts[j][0]) + 'px';
+      nodes[j].style.top = Math.round(bestPts[j][1]) + 'px';
+      nodes[j].style.transitionDelay = (j * 26) + 'ms';
+    }
+    var svg = fan.querySelector('svg');
     svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
-    var pad = R + 1, d = '', a0 = -90, a1 = 270, steps = 72;
-    for (var s = 0; s <= steps; s++) {
-      var t2 = a0 + (a1 - a0) * s / steps, rad = t2 * Math.PI / 180;
-      d += (s === 0 ? 'M' : 'L') + (cx + pad * Math.cos(rad)).toFixed(1) + ' ' + (cy + pad * Math.sin(rad)).toFixed(1) + ' ';
+    var pts2 = '', steps = 44, ar = R + 24;
+    for (var s2 = 0; s2 <= steps; s2++) {
+      var t = (best - 76 + (152 * s2 / steps)) * Math.PI / 180;
+      pts2 += (s2 === 0 ? 'M' : 'L') + (x + ar * Math.cos(t)).toFixed(1) + ' ' + (y + ar * Math.sin(t)).toFixed(1) + ' ';
     }
     var NS = 'http://www.w3.org/2000/svg';
     while (svg.firstChild) svg.removeChild(svg.firstChild);
-    var path = document.createElementNS(NS, 'path');
-    path.setAttribute('d', d.trim());
-    path.setAttribute('fill', 'none');
-    path.setAttribute('stroke', 'rgba(127,200,182,.78)');
-    path.setAttribute('stroke-width', '1.3');
-    path.setAttribute('stroke-dasharray', '4 6');
-    svg.appendChild(path);
+    var p2 = document.createElementNS(NS, 'path');
+    p2.setAttribute('d', pts2.trim());
+    p2.setAttribute('fill', 'none');
+    p2.setAttribute('stroke', 'rgba(127,200,182,.72)');
+    p2.setAttribute('stroke-width', '1.2');
+    p2.setAttribute('stroke-dasharray', '3 7');
+    svg.appendChild(p2);
   }
 
-  function openRing() {
-    buildRing();
-    ringOn = true;
-    ring.classList.add('is-on');
-    layoutRing();
-    var nodes = ring.querySelectorAll('.lxExtN');
-    for (var i = 0; i < nodes.length; i++) nodes[i].classList.remove('is-in');
-    setTimeout(function () {
-      var ns = ring.querySelectorAll('.lxExtN');
-      for (var j = 0; j < ns.length; j++) ns[j].classList.add('is-in');
-    }, 40);
+  function openFan() {
+    buildFan();
+    fanOn = true;
+    fan.classList.add('is-on');
     orb.classList.add('is-on');
-    pos.edge = (pos.x < W() / 2) ? 'l' : 'r';
-    applyPos(); save();
+    var nodes = fan.querySelectorAll('.lxExtN');
+    for (var i = 0; i < nodes.length; i++) nodes[i].classList.remove('is-in');
+    layoutFan();
+    setTimeout(function () {
+      var ns = fan.querySelectorAll('.lxExtN');
+      for (var j = 0; j < ns.length; j++) ns[j].classList.add('is-in');
+    }, 30);
   }
 
-  function closeRing() {
-    if (!ringOn) return;
-    ringOn = false;
-    if (ring) {
-      var nodes = ring.querySelectorAll('.lxExtN');
+  function closeFan() {
+    if (!fanOn) return;
+    fanOn = false;
+    if (fan) {
+      var nodes = fan.querySelectorAll('.lxExtN');
       for (var i = 0; i < nodes.length; i++) nodes[i].classList.remove('is-in');
-      ring.classList.remove('is-on');
+      fan.classList.remove('is-on');
     }
-    orb.classList.remove('is-on');
-    applyPos();
+    if (!open) orb.classList.remove('is-on');
   }
 
-  /* ---------------- 面板 ---------------- */
-  function buildPanel() {
-    if (panel) return panel;
-    panel = el('iframe'); panel.id = 'lxExtPanel';
-    panel.setAttribute('scrolling', 'no');
-    panel.srcdoc = HTML;
-    panel.addEventListener('load', function () { if (opened) feed(cur); });
-    document.body.appendChild(panel);
-    var xb = el('button'); xb.id = 'lxExtPClose'; xb.type = 'button'; xb.innerHTML = '×';
-    xb.setAttribute('aria-label', '收起');
-    xb.addEventListener('click', function () { closePanel(); openRing(); });
-    document.body.appendChild(xb);
-    return panel;
+  /* ---------------- 小窗 ---------------- */
+  function buildCard() {
+    if (card) return;
+    card = el('div'); card.id = 'lxExtCard';
+    card.innerHTML = '<div id="lxExtHead"><b>01</b><span class="t">状态卡</span><i class="g"></i>' +
+      '<button id="lxExtX2" type="button" aria-label="收起">×</button></div>';
+    document.body.appendChild(card);
+    card.querySelector('#lxExtX2').addEventListener('click', function (e) {
+      e.stopPropagation(); closeCard();
+    });
+
+    iframe = el('iframe'); iframe.id = 'lxExtPanel';
+    iframe.setAttribute('frameborder', '0');
+    iframe.srcdoc = HTML;
+    iframe.addEventListener('load', function () {
+      inject();
+      if (open) { feed(cur); measure(); }
+    });
+    card.appendChild(iframe);
+  }
+
+  function inject() {
+    var doc = null;
+    try { doc = iframe.contentWindow.document; } catch (e) { return false; }
+    if (!doc || !doc.documentElement) return false;
+    doc.documentElement.classList.add('is-frame');
+    doc.documentElement.classList.add('is-ext-mini');
+    if (doc.getElementById('lxExtMiniCss')) return true;
+    var s = doc.createElement('style');
+    s.id = 'lxExtMiniCss';
+    s.textContent = MINI;
+    (doc.body || doc.head || doc.documentElement).appendChild(s);
+    return true;
   }
 
   function feed(n) {
-    if (!panel) return false;
+    if (!iframe) return false;
     var w = null;
-    try { w = panel.contentWindow; } catch (e) { w = null; }
+    try { w = iframe.contentWindow; } catch (e) { w = null; }
     if (!w || !w.lxFill) return false;
     var d = lastData();
-    if (!d) { tip('这条没有任何 <lx_data> 数据'); return false; }
+    if (!d) { tip('这条还没有 <lx_data> 数据'); return false; }
     try {
       w.lxFill(d);
-      if (w.lxOpenCard) w.lxOpenCard(n || 1);
-      w.postMessage({ type: 'lx-ext-panel' }, '*');
-      return true;
+      if (w.lxOpenCard) w.lxOpenCard(n || cur);
     } catch (e) { return false; }
+    /* 组件首次渲染会把自己重置回 01，补两次确认 */
+    var want = n || cur;
+    [90, 320].forEach(function (ms) {
+      setTimeout(function () {
+        if (!open || cur !== want) return;
+        try { if (iframe.contentWindow.lxOpenCard) iframe.contentWindow.lxOpenCard(want); } catch (e) {}
+      }, ms);
+    });
+    return true;
+  }
+
+  function place() {
+    var w = Math.min(W() - 92, 320), h = H(), ey = realY();
+    var top, cap;
+    var aboveH = ey - 68 - 14, belowTop = ey + 68, belowH = h - belowTop - 16;
+    if (ey > h * 0.5 && aboveH >= 300) { top = 14; cap = aboveH; }
+    else if (belowH >= 300) { top = belowTop; cap = belowH; }
+    else { top = 14; cap = h - 28; }
+    cap = Math.min(cap, Math.round(h * 0.56), 468);
+    geo = { top: top, cap: cap, left: Math.round((W() - w) / 2), w: Math.round(w) };
+    card.style.left = geo.left + 'px';
+    card.style.width = geo.w + 'px';
+    card.style.top = top + 'px';
+    card.style.maxHeight = cap + 'px';
+  }
+
+  function measure() {
+    if (!open || !iframe || !card) return;
+    var doc = null;
+    try { doc = iframe.contentWindow.document; } catch (e) { return; }
+    if (!doc || !doc.body) return;
+    var hh = Math.max(doc.documentElement.scrollHeight || 0, doc.body.scrollHeight || 0, 90);
+    var maxIfr = Math.max(90, geo.cap - HEAD_H);
+    var vh = Math.min(hh, maxIfr);
+    iframe.style.height = Math.round(vh) + 'px';
+  }
+
+  function pump() {
+    if (!open) return;
+    var ts = [0, 140, 380, 800, 1500, 2600];
+    for (var i = 0; i < ts.length; i++) setTimeout(function () { if (open) measure(); }, ts[i]);
   }
 
   function openCard(n) {
     cur = n || 1;
-    closeRing();
-    buildPanel();
-    panel.classList.add('is-on');
-    var xb = document.getElementById('lxExtPClose');
-    if (xb) xb.classList.add('is-on');
-    opened = true;
-    feed(cur);
-    setTimeout(function () { feed(cur); }, 700);
-    setTimeout(function () { feed(cur); }, 1800);
-    if (!savedOverflow) savedOverflow = { doc: document.documentElement.style.overflow, body: document.body.style.overflow };
-    document.documentElement.style.overflow = 'hidden';
-    document.body.style.overflow = 'hidden';
-    watchCard();
+    closeFan();
+    buildCard();
+    open = true;
+    var h = card.querySelector('#lxExtHead');
+    h.querySelector('b').textContent = '0' + cur;
+    h.querySelector('.t').textContent = NAMES[cur];
+    place();
+    card.classList.add('is-on');
+    orb.classList.add('is-on');
+    inject(); feed(cur);
+    pump();
+    setTimeout(function () { if (!lastData()) tip('这条还没有 <lx_data> 数据'); }, 900);
   }
 
-  function closePanel() {
-    opened = false;
-    if (panel) panel.classList.remove('is-on');
-    var xb = document.getElementById('lxExtPClose');
-    if (xb) xb.classList.remove('is-on');
-    if (panel) { try { panel.contentWindow.postMessage({ type: 'lx-unpanel' }, '*'); } catch (e) {} }
-    if (savedOverflow) {
-      document.documentElement.style.overflow = savedOverflow.doc || '';
-      document.body.style.overflow = savedOverflow.body || '';
-    }
-    stopWatch();
-    orb.classList.remove('is-on');
-    applyPos();
+  function closeCard(quiet) {
+    open = false;
+    if (card) card.classList.remove('is-on');
+    if (iframe && iframe.style.height) iframe.style.height = '';
+    if (quiet) orb.classList.remove('is-on');
+    else setTimeout(function () { if (!open) openFan(); }, 40);
   }
 
-  function watchCard() {
-    stopWatch();
-    watchTimer = setInterval(function () {
-      if (!opened || !panel) { stopWatch(); return; }
-      var doc = null;
-      try { doc = panel.contentWindow.document; } catch (e) { return; }
-      var c = doc && doc.getElementById('lxCard');
-      if (c && c.hasAttribute('hidden')) { closePanel(); openRing(); }
-    }, 420);
+  function toggle() {
+    if (open) closeCard(true);
+    else if (fanOn) closeFan();
+    else openFan();
   }
-  function stopWatch() { if (watchTimer) { clearInterval(watchTimer); watchTimer = null; } }
 
   /* ---------------- 球 ---------------- */
   function build() {
@@ -294,7 +380,7 @@ var lxExtReady = false;
     orb.setAttribute('aria-label', '仪表盘');
     orb.innerHTML = '<i class="sp"><i></i></i><span class="core">组件</span>';
     document.body.appendChild(orb);
-    if (!load()) { pos.x = W() - 32; pos.y = H() - 105; pos.edge = 'r'; }
+    if (!load()) { pos.x = W() - 32; pos.y = H() - 100; pos.edge = 'r'; }
     applyPos();
     bind();
   }
@@ -309,7 +395,7 @@ var lxExtReady = false;
       if (ev.type === 'touchstart') lastTouch = Date.now();
       else if (Date.now() - lastTouch < 700) return false;
       var q = pt(ev);
-      drag = { sx: q.x, sy: q.y, ox: pos.x, oy: pos.y, t: Date.now(), moved: false };
+      drag = { sx: q.x, sy: q.y, ox: realX(), oy: realY(), t: Date.now(), moved: false };
       orb.classList.add('is-grab');
       if (ev.cancelable) ev.preventDefault();
       return false;
@@ -317,10 +403,12 @@ var lxExtReady = false;
     function move(ev) {
       if (!drag) return;
       var q = pt(ev), dx = q.x - drag.sx, dy = q.y - drag.sy;
-      if (Math.abs(dx) + Math.abs(dy) > 6) drag.moved = true;
+      if (Math.abs(dx) + Math.abs(dy) > 6) {
+        if (!drag.moved) { drag.moved = true; closeFan(); }
+      }
       if (!drag.moved) return;
-      pos.x = clamp(drag.ox + dx, 32, W() - 32);
-      pos.y = clamp(drag.oy + dy, 30, H() - 30);
+      pos.x = clamp(drag.ox + dx, 30, W() - 30);
+      pos.y = clamp(drag.oy + dy, 34, H() - 34);
       pos.edge = null;
       applyPos();
       if (ev.cancelable) ev.preventDefault();
@@ -331,22 +419,22 @@ var lxExtReady = false;
       var dt = Date.now() - drag.t, moved = drag.moved;
       drag = null;
       orb.classList.remove('is-grab');
-      if (!moved && dt < 600) {
-        if (ringOn) closeRing();
-        else if (opened) { closePanel(); openRing(); }
-        else openRing();
-      } else snap();
+      if (!moved && dt < 600) toggle();
+      else { snap(); if (open) { place(); pump(); } }
     }
     orb.addEventListener('touchstart', down, { passive: false });
     orb.addEventListener('touchmove', move, { passive: false });
     orb.addEventListener('touchend', up);
-    orb.addEventListener('touchcancel', up);
+    orb.addEventListener('touchcancel', function () { drag = null; orb.classList.remove('is-grab'); });
     orb.addEventListener('mousedown', function (e) { e.preventDefault(); down(e); });
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
-    window.addEventListener('resize', function () { applyPos(); });
+    window.addEventListener('resize', function () {
+      applyPos(); if (fanOn) layoutFan();
+      if (open) { place(); measure(); }
+    });
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') { if (opened) { closePanel(); openRing(); } else closeRing(); }
+      { if (open) closeCard(true); else closeFan(); }
     });
   }
 
@@ -364,14 +452,10 @@ var lxExtReady = false;
     var c = ctx();
     if (!c || !c.eventSource || !c.event_types) return;
     var ev = c.event_types;
-    if (ev.CHAT_CHANGED) {
-      c.eventSource.on(ev.CHAT_CHANGED, function () { stopWatch(); closePanel(); closeRing(); });
-    }
-    if (ev.MESSAGE_RECEIVED) {
-      c.eventSource.on(ev.MESSAGE_RECEIVED, function () {
-        if (opened) setTimeout(function () { feed(cur); }, 500);
-      });
-    }
+    if (ev.CHAT_CHANGED) c.eventSource.on(ev.CHAT_CHANGED, function () { closeCard(true); closeFan(); });
+    if (ev.MESSAGE_RECEIVED) c.eventSource.on(ev.MESSAGE_RECEIVED, function () {
+      if (open) setTimeout(function () { feed(cur); pump(); }, 500);
+    });
   }, 500);
 
   /* 兜底：每 2s 比对当前聊天指纹，换了角色/聊天就收起 */
@@ -379,17 +463,15 @@ var lxExtReady = false;
   setInterval(function () {
     var c = ctx();
     if (!c || !c.chat) return;
-    var m0 = c.chat[0] || {};
-    var sig = String(c.characterId || c.character_name || '') + '|' + String(c.chat.length) + '|' + String((m0.mes || '').slice(0, 40)) + '|' + String((c.chat[c.chat.length - 1] || {}).mes || '').slice(0, 20);
+    var m0 = c.chat[0] || {}, mL = c.chat[c.chat.length - 1] || {};
+    var sig = String(c.characterId || c.character_name || '') + '|' + String(c.chat.length) + '|' +
+      String((m0.mes || '').slice(0, 40)) + '|' + String((mL.mes || '')).slice(0, 20);
     if (sig0 === null) { sig0 = sig; return; }
-    if (sig !== sig0) {
-      sig0 = sig;
-      stopWatch(); closePanel(); closeRing();
-    }
+    if (sig !== sig0) { sig0 = sig; closeCard(true); closeFan(); }
   }, 2000);
 
   window.lxExt = {
-    ring: openRing, closeRing: closeRing, card: openCard, close: closePanel,
-    refresh: function () { if (opened) feed(cur); }, data: lastData
+    fan: openFan, closeFan: closeFan, card: openCard, close: closeCard,
+    refresh: function () { if (open) { feed(cur); pump(); } }, data: lastData
   };
 })();
