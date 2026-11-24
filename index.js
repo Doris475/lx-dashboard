@@ -71,8 +71,7 @@ var lxExtReady = false;
 
     /* 小窗 */
     '#lxExtCard{position:fixed;z-index:2147483560;display:none;flex-direction:column;overflow:hidden;',
-    'border-radius:18px;border:1px solid rgba(127,200,182,.4);background:rgba(251,253,252,.94);',
-    '-webkit-backdrop-filter:blur(16px) saturate(1.06);backdrop-filter:blur(16px) saturate(1.06);',
+    'border-radius:18px;border:1px solid rgba(127,200,182,.4);background:#fdfefd;',
     'box-shadow:0 20px 44px -20px rgba(12,48,40,.42),0 0 0 1px rgba(255,255,255,.7) inset;',
     'opacity:0;transform:translateY(10px) scale(.986);transform-origin:50% 100%;',
     'transition:opacity .22s,transform .3s cubic-bezier(.2,.9,.2,1);}',
@@ -90,7 +89,11 @@ var lxExtReady = false;
     '#lxExtX2{flex:0 0 auto;width:26px;height:26px;padding:0;border-radius:50%;border:1px solid rgba(127,200,182,.4);',
     'background:rgba(255,255,255,.9);color:#5b7d77;font-family:"Songti SC",serif;font-size:14px;line-height:1;cursor:pointer;',
     '-webkit-tap-highlight-color:transparent;display:flex;align-items:center;justify-content:center;}',
-    '#lxExtPanel{display:block;width:100%;flex:1 1 auto;border:0;margin:0;padding:0;background:transparent;overflow:hidden;}',
+    '#lxExtBody{display:block;width:100%;flex:1 1 auto;border:0;margin:0;padding:0;background:transparent;overflow:hidden;}',
+
+    /* 旧版（2.0）残留：一律不显示，避免又冒出整屏磨砂环形 */
+    '#lxExtRing,#lxExtMask,#lxExtArc,#lxExtX,#lxExtPClose{display:none!important;visibility:hidden!important;}',
+    '#lxExtPanel{display:none!important;visibility:hidden!important;}',
 
     /* 提示 */
     '#lxExtTip{position:fixed;left:50%;bottom:88px;transform:translateX(-50%);z-index:2147483601;max-width:76vw;padding:7px 13px;',
@@ -305,7 +308,7 @@ var lxExtReady = false;
       e.stopPropagation(); closeCard();
     });
 
-    iframe = el('iframe'); iframe.id = 'lxExtPanel';
+    iframe = el('iframe'); iframe.id = 'lxExtBody';
     iframe.setAttribute('frameborder', '0');
     iframe.srcdoc = HTML;
     iframe.addEventListener('load', function () {
@@ -537,35 +540,60 @@ var lxExtReady = false;
     }
   }
 
+  var BRE = /[\[【][^\[\]【】\n]{1,10}[\]】]/g;
+  var SECRE = /[\[【](状态|计划|日记|手机|书摘|自由|日历|记录|浏览|通话|账单|相册|地图|消息|音乐|备忘|便签|日程|任务|作息)[\]】]/g;
+
+  /* 数据块起点：优先认已知段落标记，其次找“后面紧跟两个 键： 值”的方括号 */
+  function findStart(t) {
+    SECRE.lastIndex = 0;
+    var m = SECRE.exec(t);
+    if (m) return m.index;
+    BRE.lastIndex = 0;
+    while ((m = BRE.exec(t))) {
+      if (isDataish(t.slice(m.index, m.index + 240))) return m.index;
+    }
+    return 0;
+  }
+  var KEYRE = /(名字|身份|好感度|信任度|体力|欲望|心动|理智|款式|标题|署名|批注|地点|天气|温度|读|第\s?\d+\s?次)\s*[:：]/g;
+
+  function isDataish(txt) {
+    var keys = (txt.match(KEYRE) || []).length;
+    if (keys >= 2) return true;
+    var marks = (txt.match(BRE) || []);
+    var uniq = {};
+    for (var i = 0; i < marks.length; i++) uniq[marks[i]] = 1;
+    return Object.keys(uniq).length >= 2 && keys >= 1;
+  }
+
   function stripOne(el) {
     var t = el.textContent || '';
-    var hasTag = t.indexOf('lx_data') >= 0;
     var ranges = [], m, re;
 
-    /* 1) 标准标签段 */
-    if (hasTag) {
+    /* 1) 有开标签：开→闭（或→结尾） */
+    if (/<\s*lx_data\s*>/i.test(t)) {
       re = /<lx_data>[\s\S]*?(?:<\/lx_data>|$)/g;
       while ((m = re.exec(t))) {
         ranges.push([m.index, m.index + m[0].length]);
         if (!m[0].length) re.lastIndex++;
       }
-      /* 2) 只有闭合标签：从第一个分段标记切到 </lx_data> */
-      if (ranges.length === 0) {
-        var cm = /<\s*\/\s*lx_data\s*>/i.exec(t);
-        var first = TAGRE.exec(t);
-        if (cm && first) ranges.push([first.index, cm.index + cm[0].length]);
+    }
+
+    /* 2) 只有闭合标签（数据被拆到下一楼）：从该楼起点切到 </lx_data> */
+    if (!ranges.length) {
+      var cm = /<\s*\/\s*lx_data\s*>/i.exec(t);
+      if (cm) {
+        var from = Math.min(findStart(t), cm.index);
+        ranges.push([from, cm.index + cm[0].length]);
       }
-    } else {
-      /* 3) 完全没标签：分段标记 ≥2 个，或紧跟 名字：/好感度： 才认定是数据块 */
-      var first2 = TAGRE.exec(t);
-      if (first2) {
-        var rest = t.slice(first2.index);
-        var marks = rest.match(new RegExp(TAGRE.source, 'g')) || [];
-        var distinct = {};
-        for (var d = 0; d < marks.length; d++) distinct[marks[d]] = 1;
-        var looksData = (Object.keys(distinct).length >= 2) || /(名字|好感度|信任度)\s*[:：]/.test(rest.slice(0, 120));
-        if (looksData) ranges.push([first2.index, t.length]);
-      }
+    }
+
+    /* 3) 完全没有标签：靠分段标记 + 键值对认定 */
+    if (!ranges.length) {
+      var st = findStart(t);
+      var hasSec = false;
+      SECRE.lastIndex = 0;
+      hasSec = SECRE.test(t);
+      if (hasSec || isDataish(t.slice(st, st + 240))) ranges.push([st, t.length]);
     }
 
     if (!ranges.length) {
