@@ -20,7 +20,7 @@
     return HTML;
   }
 
-  var VER = '2.8.11';
+  var VER = '2.8.12';
   var KEY = 'lxExtOrbPos8';
   var NAMES = { 1: '状态卡', 2: '日历', 3: '计划日记', 4: '自由卡', 5: '查手机', 6: '设置' };
 
@@ -1630,9 +1630,13 @@
         var e = els[i];
         if (!e || !e.isConnected) continue;
         var len = String((e.textContent || '').length);
-        if (e.getAttribute('data-lx-len') === len) continue;
+        /* 备忘记的是「清理之后」的长度，不是清理之前的。
+           以前记清理前的长度，结果流式被中断、酒馆把这一楼按原文（含数据块）重绘回来时，
+           长度又正好等于那个旧值 → 被当成「扫过了」直接跳过，数据就整段漏在正文里 */
+        if (e.getAttribute('data-lx-len') === len && e.getAttribute('data-lx-clean') === '1') continue;
         try { stripOne(e); } catch (e2) {}
-        e.setAttribute('data-lx-len', len);
+        e.setAttribute('data-lx-len', String(((e.textContent || '') || '').length));
+        e.setAttribute('data-lx-clean', '1');
       }
     } catch (e) {}
     cleanBusy = false;
@@ -1863,6 +1867,18 @@
       scheduleClean(60);
       if (open) setTimeout(function () { feed(cur); pump(); }, 500);
     });
+    /* 停生成 / 生成结束 / 重绘 / 编辑 / 滑动：这几下都可能让整楼按原文重画一遍，
+       重画之后的本子里数据段落就又回来了，必须补一轮清理 */
+    var REDRAW = ['GENERATION_STOPPED', 'GENERATION_ENDED', 'GENERATION_AFTER_COMMANDS',
+      'CHARACTER_MESSAGE_RENDERED', 'MESSAGE_EDITED', 'MESSAGE_SWIPED', 'MESSAGE_DELETED'];
+    var redrawClean = function () {
+      var ts = [0, 120, 420, 1000, 2200];
+      for (var i = 0; i < ts.length; i++) setTimeout(function () { try { cleanBodies(); } catch (e) {} }, ts[i]);
+      if (open) setTimeout(function () { feed(cur); pump(); }, 520);
+    };
+    for (var ri = 0; ri < REDRAW.length; ri++) {
+      if (ev[REDRAW[ri]]) c.eventSource.on(ev[REDRAW[ri]], redrawClean);
+    }
   }, 500);
 
   /* ---------- 版本热更：扩展列表点完 Update，这里点一下刷新就生效，不用大退 ---------- */
