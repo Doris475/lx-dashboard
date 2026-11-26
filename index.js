@@ -20,7 +20,7 @@
     return HTML;
   }
 
-  var VER = '2.9.0';
+  var VER = '2.9.1';
   var KEY = 'lxExtOrbPos8';
   var NAMES = { 1: '状态卡', 2: '日历', 3: '计划日记', 4: '自由卡', 5: '查手机', 6: '设置' };
 
@@ -338,7 +338,13 @@
   function extractData(raw) {
     var s = String(raw || '');
     if (!s.trim()) return '';
-    s = s.replace(/```[a-zA-Z]*/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+    s = s.replace(/```[a-zA-Z]*/g, '');
+    /* 2.9.0 起数据段被搬进了隐藏 div（原文做过 HTML 转义、换行写成 &#10;），
+       这里先把壳剥掉、实体还原，否则读到的是 "&#10;" 一串，解析直接就空了 */
+    s = s.replace(/<div[^>]*class="lx-src"[^>]*>/gi, '').replace(/<\/div>/gi, '');
+    s = s.replace(/&#10;/g, '\n').replace(/&#9;/g, '\t').replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&');
     var open = /<\s*lx_data\s*>/i.exec(s);
     var close = s.search(/<\s*\/\s*lx_data\s*>/i);
     var start = open ? open.index + open[0].length : -1;
@@ -367,16 +373,32 @@
       .replace(/^[\r\n]+/, '');
   }
 
+  function msgRaw(m) {
+    if (!m) return '';
+    if (m.extra && typeof m.extra.lxRaw === 'string' && m.extra.lxRaw) return m.extra.lxRaw;
+    return m.mes || '';
+  }
+
   function lastData() {
     var c = ctx();
-    if (!c || !c.chat) return '';
+    if (!c || !c.chat) return cachedData();
     for (var i = c.chat.length - 1; i >= 0; i--) {
       var m = c.chat[i];
       if (!m || m.is_system) continue;
-      var got = extractData(m.mes);
+      var got = extractData(msgRaw(m));
       if (got) return got;
     }
-    return '';
+    /* 删楼删到没有数据的旧楼（开场白/用户话）：退回上次成功的数据，
+       卡片不会一下子空掉，重启之后也还在 */
+    return cachedData();
+  }
+
+  var CACHE_KEY = 'lxExtLastData9';
+  function cacheData(d) {
+    try { if (d) localStorage.setItem(CACHE_KEY, d); } catch (e) {}
+  }
+  function cachedData() {
+    try { return localStorage.getItem(CACHE_KEY) || ''; } catch (e) { return ''; }
   }
 
   function tip(msg) {
@@ -999,7 +1021,9 @@
     try { w = iframe.contentWindow; } catch (e) { w = null; }
     if (!w || !w.lxFill) return false;
     var d = lastData();
-    if (!d) { showEmpty(true); return false; }
+    /* 删楼删到没有数据的旧楼（开场白、用户话）时不要清空：卡片保持上一次的内容，
+       总比「内容直接没了」好。只有一次都没填过才显示空态 */
+    if (!d) { showEmpty(false); return false; }
     showEmpty(false);
     var want = n || cur;
     /* 数据没变（同一条回复里翻卡 / 重复触发）：只补卡号，不重填不重排 */
@@ -1009,6 +1033,7 @@
       return true;
     }
     lastFeed = d; lastFeedCard = want;
+    cacheData(d);
     needPolish = true;
     try {
       if (w.lxResetStatus) w.lxResetStatus();
@@ -1633,23 +1658,53 @@
     try {
       var mid = parseInt(el.getAttribute('mesid') || el.getAttribute('data-mesid') || '', 10);
       if (!(mid >= 0)) return null;
-      var ctx = getCtx(), msg = ctx && ctx.chat && ctx.chat[mid];
-      if (!msg || typeof msg.mes !== 'string' || msg.mes.indexOf('class="lx-src"') >= 0) return null;
-      var rr = findRanges(msg.mes);
+      var c = ctx(), msg = c && c.chat && c.chat[mid];
+      if (!msg) return null;
+      msg.extra = msg.extra || {};
+      if (typeof msg.extra.lxRaw === 'string' && msg.extra.lxRaw) return msg.extra.lxRaw;
+
+      var src = String(msg.mes || '');
+      /* 兼容 2.9.0 写进去的隐藏 div：把原文捞出来、把壳从 mes 里删掉 */
+      if (src.indexOf('class="lx-src"') >= 0) {
+        var raw0 = '';
+        src = src.replace(/<div[^>]*class="lx-src"[^>]*>([\s\S]*?)<\/div>/gi, function (all, inner) {
+          raw0 += inner;
+          return '';
+        });
+        raw0 = unesc(raw0);
+        msg.mes = src.replace(/\n{3,}/g, '\n\n').replace(/\s+$/, '');
+        msg.extra.lxRaw = raw0;
+        saveSoft();
+        return raw0;
+      }
+
+      var rr = findRanges(src);
       if (!rr.length) return null;
       var s0 = rr[0][0], e0 = rr[rr.length - 1][1];
-      var raw = msg.mes.slice(s0, e0);
-      msg.mes = msg.mes.slice(0, s0) + '<div class="lx-src" style="display:none">' + escH(raw) + '</div>' + msg.mes.slice(e0);
-      msg.extra = msg.extra || {};
+      var raw = src.slice(s0, e0);
+      /* 直接把数据段从消息本体里删掉：正文、存档、发给模型的上下文里都不会再有它 */
+      msg.mes = (src.slice(0, s0) + src.slice(e0)).replace(/\n{3,}/g, '\n\n').replace(/\s+$/, '');
+      msg.extra.lxRaw = raw;
       msg.extra.lxHidden = 1;
       saveSoft();
       return raw;
     } catch (e) { return null; }
   }
 
+  function unesc(x) {
+    return String(x).replace(/&#10;/g, '\n').replace(/&#9;/g, '\t')
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
+  }
+
   function stripOne(el) {
-    /* 已经换过的楼，DOM 里那条 data 是 display:none 的 div，别再动它 */
-    if (el.querySelector && el.querySelector('.lx-src')) return;
+    /* 2.9.0 写进去的隐藏 div：把原文搬进 extra.lxRaw，再从 DOM 和消息里删掉 */
+    var srcDiv = el.querySelector ? el.querySelector('.lx-src') : null;
+    if (srcDiv) {
+      var raw1 = persistHide(el);
+      if (raw1 != null) { try { srcDiv.parentNode.removeChild(srcDiv); } catch (e) {} }
+      return;
+    }
     var t = el.textContent || '';
     if (t.length > 120000) return;
     var ranges = findRanges(t);
@@ -1660,20 +1715,9 @@
       }
       return;
     }
-    var raw = persistHide(el);
+    persistHide(el);
     cutRanges(el, ranges);
     tidy(el);
-    /* 当前这次会话也要能读到原文（隐藏 div 没有高度，看不见） */
-    if (raw != null) {
-      try {
-        var tn = el.querySelector('.mes_text') || el;
-        var d = document.createElement('div');
-        d.className = 'lx-src';
-        d.setAttribute('style', 'display:none');
-        d.textContent = raw;
-        tn.appendChild(d);
-      } catch (e) {}
-    }
   }
 
   var cleanAgain = false, cleanResume = 0;
