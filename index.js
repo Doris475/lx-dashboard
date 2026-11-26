@@ -20,7 +20,7 @@
     return HTML;
   }
 
-  var VER = '2.8.12';
+  var VER = '2.8.14';
   var KEY = 'lxExtOrbPos8';
   var NAMES = { 1: '状态卡', 2: '日历', 3: '计划日记', 4: '自由卡', 5: '查手机', 6: '设置' };
 
@@ -1575,7 +1575,7 @@
   /* 只处理「确实是数据块」的情形，宁漏不误杀 */
   function stripOne(el) {
     var t = el.textContent || '';
-    if (t.length > 40000) return;
+    if (t.length > 120000) return;
     if (t.indexOf('lx_data') < 0 && !SECRE.test(t) && !BRE.test(t)) return;
     var ranges = [], m, re;
 
@@ -1615,18 +1615,23 @@
     tidy(el);
   }
 
+  var cleanAgain = false, cleanResume = 0;
   function cleanBodies(list) {
     if (!SET.clean) return;
-    if (cleanBusy) return;
+    if (cleanBusy) { cleanAgain = true; return; }
     cleanBusy = true;
-    var t0 = Date.now();
+    var t0 = Date.now(), more = false, i = 0;
     try {
       /* 只扫 .mes，一次覆盖整楼；按「内容长度」判断是否处理过，
          流式追加/重绘（长度变了）会立刻重扫，不会被误跳过。
          有 list（抖动里新冒出来的那些楼）就只扫它们，长聊天不再整页重扫。 */
       var els = (list && list.length) ? list : document.querySelectorAll('.mes');
-      for (var i = 0; i < els.length; i++) {
-        if (Date.now() - t0 > 40) break;
+      var from = (list && list.length) ? 0 : cleanResume;
+      if (from >= els.length) from = 0;
+      for (i = from; i < els.length; i++) {
+        /* 40ms 预算到了不能就这么算了：长聊天（几十楼）里排在后面的楼会被永远漏掉，
+           必须记下断点、下一轮接着扫 */
+        if (Date.now() - t0 > 40) { more = true; break; }
         var e = els[i];
         if (!e || !e.isConnected) continue;
         var len = String((e.textContent || '').length);
@@ -1638,8 +1643,11 @@
         e.setAttribute('data-lx-len', String(((e.textContent || '') || '').length));
         e.setAttribute('data-lx-clean', '1');
       }
-    } catch (e) {}
+      cleanResume = (list && list.length) ? 0 : (more ? i : 0);
+    } catch (e) { cleanResume = 0; }
     cleanBusy = false;
+    if (more) setTimeout(function () { try { cleanBodies(); } catch (e) {} }, 60);
+    if (cleanAgain) { cleanAgain = false; setTimeout(function () { try { cleanBodies(); } catch (e) {} }, 40); }
   }
 
   var pendingEls = [];
@@ -1696,7 +1704,21 @@
       scheduleCleanList(hot, 120);
     });
     mo.observe(root, { childList: true, subtree: true });
+    /* 冷启动（尤其大退重进）这一楼是按存档原文重画的，数据段落全在，
+       所以多补几轮，别指望一次就扫完 */
     scheduleClean(350);
+    [900, 1800, 3200].forEach(function (t) { setTimeout(function () { try { cleanBodies(); } catch (e) {} }, t); });
+    /* 先照顾「眼前这一楼」：冷启动时最新一楼最可能带数据，别等整页扫到它 */
+    [120, 600].forEach(function (t) {
+      setTimeout(function () {
+        try {
+          var ms = document.querySelectorAll('.mes');
+          var tail = [];
+          for (var i = Math.max(0, ms.length - 3); i < ms.length; i++) tail.push(ms[i]);
+          if (tail.length) cleanBodies(tail);
+        } catch (e) {}
+      }, t);
+    });
   }
 
   /* ---------------- 兜底：自己往酒馆里注册一条隐藏正则 ---------------- */
