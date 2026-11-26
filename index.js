@@ -20,7 +20,7 @@
     return HTML;
   }
 
-  var VER = '2.8.14';
+  var VER = '2.9.0';
   var KEY = 'lxExtOrbPos8';
   var NAMES = { 1: '状态卡', 2: '日历', 3: '计划日记', 4: '自由卡', 5: '查手机', 6: '设置' };
 
@@ -119,6 +119,7 @@
 
   /* ---------------- 样式 ---------------- */
   var CSS = [
+    '#chat .mes_text .lx-src,.mes_text .lx-src{display:none!important;height:0;overflow:hidden;}',
     /* 球 */
     '#lxExtOrb{position:fixed;left:0;top:0;z-index:2147483600;width:var(--lxO,52px);height:var(--lxO,52px);padding:0;border-radius:50%;',
     'border:1px solid rgba(127,200,182,.6);touch-action:none;-webkit-tap-highlight-color:transparent;cursor:pointer;',
@@ -1534,15 +1535,20 @@
   }
 
   function cutRanges(el, ranges) {
-    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
-    var nodes = [], off = 0, n;
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, null, false);
+    var nodes = [], brs = [], off = 0, n;
     while ((n = walker.nextNode())) {
-      nodes.push([n, off, off + n.nodeValue.length]);
-      off += n.nodeValue.length;
+      if (n.nodeType === 3) {
+        nodes.push([n, off, off + n.nodeValue.length]);
+        off += n.nodeValue.length;
+      } else if (n.tagName === 'BR') {
+        brs.push([n, off]);
+      }
     }
+    var from = ranges[0][0], to = ranges[ranges.length - 1][1];
     for (var k = 0; k < nodes.length; k++) {
       var node = nodes[k][0], s0 = nodes[k][1], e0 = nodes[k][2], keep = '';
-      if (e0 <= ranges[0][0] || s0 >= ranges[ranges.length - 1][1]) continue;
+      if (e0 <= from || s0 >= to) continue;
       for (var i = s0; i < e0; i++) {
         var hit = false;
         for (var r = 0; r < ranges.length; r++) {
@@ -1551,6 +1557,10 @@
         if (!hit) keep += node.nodeValue.charAt(i - s0);
       }
       if (keep !== node.nodeValue) node.nodeValue = keep;
+    }
+    /* 换行在酒馆里是 <br>，只抠字不抠它，末尾就留一大段空白 —— 落在数据区里的 <br> 一并删掉 */
+    for (var b = 0; b < brs.length; b++) {
+      if (brs[b][1] >= from) { try { brs[b][0].parentNode.removeChild(brs[b][0]); } catch (e) {} }
     }
   }
 
@@ -1573,12 +1583,9 @@
   }
 
   /* 只处理「确实是数据块」的情形，宁漏不误杀 */
-  function stripOne(el) {
-    var t = el.textContent || '';
-    if (t.length > 120000) return;
-    if (t.indexOf('lx_data') < 0 && !SECRE.test(t) && !BRE.test(t)) return;
+  function findRanges(t) {
     var ranges = [], m, re;
-
+    if (t.indexOf('lx_data') < 0 && !SECRE.test(t) && !BRE.test(t)) return ranges;
     /* 1) 有开标签：到最近的闭标签，没有就吃到结尾 */
     if (/<\s*lx_data\s*>/i.test(t)) {
       re = /<\s*lx_data\s*>[\s\S]*?(?:<\s*\/\s*lx_data\s*>|$)/gi;
@@ -1603,7 +1610,49 @@
       var tail = st >= 0 ? t.slice(st) : '';
       if (st >= 0 && countOf(tail, KEYRE) >= 3 && uniqOf(tail, BRE) >= 2) ranges.push([st, t.length]);
     }
+    return ranges;
+  }
 
+  function escH(x) {
+    /* 换行换成 &#10;：HTML 里看不见，但 textContent 读回来还是 \n，
+       扩展自己解析数据时不会因为丢了换行而解析错 */
+    return String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '&#10;');
+  }
+  function getCtx() {
+    try { return (window.SillyTavern && SillyTavern.getContext) ? SillyTavern.getContext() : null; } catch (e) { return null; }
+  }
+  function saveSoft() {
+    try { if (typeof saveChatDebounced === 'function') { saveChatDebounced(); return; } } catch (e) {}
+    try { if (typeof saveChat === 'function') { saveChat(); return; } } catch (e) {}
+  }
+
+  /* 关键：把数据段从「消息本体」里换成一个 display:none 的 div。
+     这样不管酒馆怎么重绘、大退重进、暂停、换卡，存档里这一楼本身就没有正文数据了，
+     DOM 侧再怎么晚到也不会漏；同时原文还留在 div 里，量数据/仪表盘照样读得到。 */
+  function persistHide(el) {
+    try {
+      var mid = parseInt(el.getAttribute('mesid') || el.getAttribute('data-mesid') || '', 10);
+      if (!(mid >= 0)) return null;
+      var ctx = getCtx(), msg = ctx && ctx.chat && ctx.chat[mid];
+      if (!msg || typeof msg.mes !== 'string' || msg.mes.indexOf('class="lx-src"') >= 0) return null;
+      var rr = findRanges(msg.mes);
+      if (!rr.length) return null;
+      var s0 = rr[0][0], e0 = rr[rr.length - 1][1];
+      var raw = msg.mes.slice(s0, e0);
+      msg.mes = msg.mes.slice(0, s0) + '<div class="lx-src" style="display:none">' + escH(raw) + '</div>' + msg.mes.slice(e0);
+      msg.extra = msg.extra || {};
+      msg.extra.lxHidden = 1;
+      saveSoft();
+      return raw;
+    } catch (e) { return null; }
+  }
+
+  function stripOne(el) {
+    /* 已经换过的楼，DOM 里那条 data 是 display:none 的 div，别再动它 */
+    if (el.querySelector && el.querySelector('.lx-src')) return;
+    var t = el.textContent || '';
+    if (t.length > 120000) return;
+    var ranges = findRanges(t);
     if (!ranges.length) {
       if (el.getAttribute('data-lx-hidden') === '1') {
         el.style.removeProperty('display');
@@ -1611,8 +1660,20 @@
       }
       return;
     }
+    var raw = persistHide(el);
     cutRanges(el, ranges);
     tidy(el);
+    /* 当前这次会话也要能读到原文（隐藏 div 没有高度，看不见） */
+    if (raw != null) {
+      try {
+        var tn = el.querySelector('.mes_text') || el;
+        var d = document.createElement('div');
+        d.className = 'lx-src';
+        d.setAttribute('style', 'display:none');
+        d.textContent = raw;
+        tn.appendChild(d);
+      } catch (e) {}
+    }
   }
 
   var cleanAgain = false, cleanResume = 0;
